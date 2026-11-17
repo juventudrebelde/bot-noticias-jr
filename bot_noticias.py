@@ -37,27 +37,24 @@ def guardar_procesados(procesados):
 def obtener_url_imagen(entrada):
     """
     Intenta extraer la URL de la imagen de una entrada del feed RSS.
-    Busca en los campos más comunes: enclosures, media_content y media_thumbnail.
+    Si no la encuentra en el RSS, descarga el HTML del artículo y busca og:image.
     """
-    # 1. Buscar en 'enclosures' (muy común para imágenes)
+    # --- 1. Intentar desde el RSS (como antes) ---
     if "enclosures" in entrada:
         for enlace in entrada.enclosures:
             if enlace.get("type", "").startswith("image/"):
                 return enlace.get("href")
 
-    # 2. Buscar en 'media_content' (Media RSS)
     if "media_content" in entrada:
         for media in entrada.media_content:
             if media.get("url"):
                 return media.get("url")
 
-    # 3. Buscar en 'media_thumbnail' (miniatura de Media RSS)
     if "media_thumbnail" in entrada:
         for thumb in entrada.media_thumbnail:
             if thumb.get("url"):
                 return thumb.get("url")
 
-    # 4. Como último recurso, buscar una etiqueta <img> en el resumen o contenido
     contenido = entrada.get("summary", "")
     if not contenido and entrada.get("content"):
         contenido = entrada.content[0].get("value", "")
@@ -70,7 +67,44 @@ def obtener_url_imagen(entrada):
         except Exception:
             pass
 
-    return None  # Si no se encuentra ninguna imagen
+    # --- 2. Si el RSS no trajo imagen, buscar en el HTML del artículo ---
+    url_articulo = entrada.link
+    try:
+        respuesta = requests.get(
+            url_articulo,
+            timeout=20,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0 Safari/537.36"
+                )
+            },
+        )
+        respuesta.raise_for_status()
+        sopa = BeautifulSoup(respuesta.text, "html.parser")
+
+        # Buscar la metaetiqueta og:image (la más fiable)
+        og_image = sopa.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            return og_image["content"]
+
+        # Buscar twitter:image como respaldo
+        tw_image = sopa.find("meta", attrs={"name": "twitter:image"})
+        if tw_image and tw_image.get("content"):
+            return tw_image["content"]
+
+        # Si no hay metaetiquetas, buscar la primera imagen grande en el cuerpo
+        # (esto es menos fiable, pero puede funcionar)
+        for img in sopa.find_all("img"):
+            src = img.get("src")
+            if src and not src.startswith("data:") and "logo" not in src.lower():
+                return src
+
+    except Exception as e:
+        print(f"   ❌ Error al buscar imagen en el artículo: {e}")
+
+    return None  # Si no se encuentra nada
 
 
 def extraer_contenido(url, reintentos=2, espera=5):
