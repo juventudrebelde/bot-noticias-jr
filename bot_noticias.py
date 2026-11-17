@@ -4,11 +4,12 @@ import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
 import json
+import time
 
 # --- 1. CONFIGURACIÓN ---
-TELEGRAM_BOT_TOKEN = "9039109666:AAEdVjYcUawSXkjc8RsKqkmbHsCWnxJi6qU"
-TELEGRAM_CHAT_ID = "-1001728612831"
-GROQ_API_KEY = "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"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TOKEN_DE_BOTFATHER")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "@tu_canal_o_id_numerico")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "TU_CLAVE_DE_GROQ")
 RSS_URL = "http://www.juventudrebelde.cu/get/rss/grupo/generales/"
 ARCHIVO_PROCESADOS = "noticias_procesadas.json"
 
@@ -18,77 +19,162 @@ client = OpenAI(
     api_key=GROQ_API_KEY,
 )
 
+
 def cargar_procesados():
+    """Carga la lista de URLs ya publicadas para no duplicar."""
     if os.path.exists(ARCHIVO_PROCESADOS):
-        with open(ARCHIVO_PROCESADOS, 'r') as f:
+        with open(ARCHIVO_PROCESADOS, "r") as f:
             return set(json.load(f))
     return set()
 
+
 def guardar_procesados(procesados):
-    with open(ARCHIVO_PROCESADOS, 'w') as f:
+    """Guarda la lista actualizada de URLs procesadas."""
+    with open(ARCHIVO_PROCESADOS, "w") as f:
         json.dump(list(procesados), f)
 
-    import time # Asegúrate de tener esta importación al inicio del archivo
+
+def obtener_url_imagen(entrada):
+    """
+    Intenta extraer la URL de la imagen de una entrada del feed RSS.
+    Busca en los campos más comunes: enclosures, media_content y media_thumbnail.
+    """
+    # 1. Buscar en 'enclosures' (muy común para imágenes)
+    if "enclosures" in entrada:
+        for enlace in entrada.enclosures:
+            if enlace.get("type", "").startswith("image/"):
+                return enlace.get("href")
+
+    # 2. Buscar en 'media_content' (Media RSS)
+    if "media_content" in entrada:
+        for media in entrada.media_content:
+            if media.get("url"):
+                return media.get("url")
+
+    # 3. Buscar en 'media_thumbnail' (miniatura de Media RSS)
+    if "media_thumbnail" in entrada:
+        for thumb in entrada.media_thumbnail:
+            if thumb.get("url"):
+                return thumb.get("url")
+
+    # 4. Como último recurso, buscar una etiqueta <img> en el resumen o contenido
+    contenido = entrada.get("summary", "")
+    if not contenido and entrada.get("content"):
+        contenido = entrada.content[0].get("value", "")
+    if contenido:
+        try:
+            soup = BeautifulSoup(contenido, "html.parser")
+            img_tag = soup.find("img")
+            if img_tag and img_tag.get("src"):
+                return img_tag["src"]
+        except Exception:
+            pass
+
+    return None  # Si no se encuentra ninguna imagen
+
 
 def extraer_contenido(url, reintentos=2, espera=5):
+    """Descarga y limpia el texto principal de un artículo, con reintentos."""
     for intento in range(1, reintentos + 1):
         try:
             respuesta = requests.get(
                 url,
-                timeout=30,  # Aumentado de 15 a 30 segundos
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                timeout=30,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0 Safari/537.36"
+                    )
+                },
             )
             respuesta.raise_for_status()
-            sopa = BeautifulSoup(respuesta.text, 'html.parser')
-            parrafos = sopa.find_all('p')
-            texto = "\n".join(p.get_text(strip=True) for p in parrafos if len(p.get_text(strip=True)) > 50)
+            sopa = BeautifulSoup(respuesta.text, "html.parser")
+            parrafos = sopa.find_all("p")
+            texto = "\n".join(
+                p.get_text(strip=True)
+                for p in parrafos
+                if len(p.get_text(strip=True)) > 50
+            )
             return texto
         except requests.exceptions.Timeout:
-            print(f"   ⏳ Intento {intento}/{reintentos}: Tiempo de espera agotado. Reintentando en {espera}s...")
+            print(
+                f"   ⏳ Intento {intento}/{reintentos}: Tiempo de espera agotado. "
+                f"Reintentando en {espera}s..."
+            )
             time.sleep(espera)
         except Exception as e:
             print(f"   ❌ Error al extraer contenido de {url}: {e}")
-            return None # Para otros errores (404, 500, etc.), no reintentar
+            return None
     print(f"   ❌ No se pudo obtener el contenido tras {reintentos} intentos.")
     return None
 
+
 def generar_post_con_ia(titulo, contenido):
-    prompt_sistema = """Actúa como un editor de un canal de noticias cubano. A partir del artículo proporcionado, genera un post para Telegram.
+    """Usa la IA para generar el post de Telegram."""
+    prompt_sistema = """Actúa como un editor de un canal de noticias cubano llamado Juventud Rebelde. A partir del artículo proporcionado, genera un post atractivo para Telegram.
+
 El post debe tener:
-1. Un titular llamativo y conciso (máx. 100 caracteres), sin que nunca diga Titular o algo parecido, solo el titular generado. Emojis que se asocien con el post en el titular, uno al inicio y otro al final. 
-2. Un resumen de 2-3 frases que explique la noticia principal, sin que nunca diga resumen, solo el texto del resumen.
-3. Un tono informativo, profesional y cercano.
-4. Al final, incluye un CTA que invite a visitar nuestra web en www.juventudrebelde.cu que diga: Si quieres conocer más de esta y otras noticias, visítanos en nuestra web www.juventudrebelde.cu"""
-    
+1. Un titular llamativo y conciso (máx. 100 caracteres), sin la palabra "Titular". Usa un emoji relacionado al inicio y otro al final del titular.
+2. Un resumen de 2-3 frases que explique la noticia principal de forma clara y directa, sin la palabra "Resumen".
+3. Un tono informativo, profesional pero cercano, que invite a la lectura.
+4. Finaliza con un llamado a la acción (CTA) que diga exactamente: "Si quieres conocer más de esta y otras noticias, visítanos en nuestra web www.juventudrebelde.cu"
+
+El texto completo del post (titular + resumen + CTA) NO debe exceder los 900 caracteres para asegurar que quepa como pie de foto en Telegram. No uses Markdown ni negritas, solo texto plano y emojis."""
+
     try:
         respuesta = client.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": f"Título: {titulo}\n\nContenido: {contenido[:4000]}"}
+                {
+                    "role": "user",
+                    "content": f"Título: {titulo}\n\nContenido: {contenido[:4000]}",
+                },
             ],
             temperature=0.7,
         )
         return respuesta.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Error al contactar la IA: {e}")
+        print(f"   ❌ Error al contactar la IA: {e}")
         return None
 
-def enviar_a_telegram(texto):
-    url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": texto,
-        "disable_web_page_preview": False
-    }
+
+def enviar_a_telegram(texto, url_imagen=None):
+    """
+    Envía un mensaje o una foto con texto (caption) al canal de Telegram.
+    Si se proporciona una URL de imagen, usa 'sendPhoto'; si no, usa 'sendMessage'.
+    """
+    if url_imagen:
+        metodo_api = "sendPhoto"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "photo": url_imagen,
+            "caption": texto,
+        }
+    else:
+        metodo_api = "sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": texto,
+            "disable_web_page_preview": False,
+        }
+
+    url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{metodo_api}"
+
     try:
-        respuesta = requests.post(url_api, json=payload, timeout=10)
+        respuesta = requests.post(url_api, json=payload, timeout=20)
         respuesta.raise_for_status()
-        print("✅ Post publicado en Telegram.")
+        print(f"   ✅ Post publicado en Telegram (método: {metodo_api}).")
         return True
     except Exception as e:
-        print(f"Error al publicar en Telegram: {e}")
+        print(f"   ❌ Error al publicar en Telegram: {e}")
+        try:
+            print(f"   Respuesta de la API: {respuesta.text}")
+        except Exception:
+            pass
         return False
+
 
 def main():
     print("🔍 Buscando noticias nuevas...")
@@ -105,6 +191,9 @@ def main():
             continue
 
         print(f"📰 Nueva noticia detectada: {entrada.title}")
+
+        url_imagen = obtener_url_imagen(entrada)
+
         contenido = extraer_contenido(url)
         if not contenido:
             print("   ❌ No se pudo extraer el contenido. Se omite.")
@@ -116,7 +205,14 @@ def main():
             print("   ❌ La IA no pudo generar el post. Se omite.")
             continue
 
-        if enviar_a_telegram(post):
+        if url_imagen:
+            print(f"   🖼️ Imagen encontrada. Enviando como foto con pie de texto...")
+            exito = enviar_a_telegram(post, url_imagen=url_imagen)
+        else:
+            print("   📝 No se encontró imagen. Enviando solo el texto...")
+            exito = enviar_a_telegram(post)
+
+        if exito:
             procesados.add(url)
             guardar_procesados(procesados)
             print("   ✅ Procesada y guardada.")
@@ -124,6 +220,7 @@ def main():
             print("   ❌ Falló el envío a Telegram. Se reintentará en la próxima ejecución.")
 
     print("🏁 Revisión completada.")
+
 
 if __name__ == "__main__":
     main()
