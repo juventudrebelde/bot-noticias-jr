@@ -272,6 +272,10 @@ def main():
         else:
             print("   ❌ Falló el envío a Telegram. Se reintentará en la próxima ejecución.")
 
+        # Guardar siempre el archivo, aunque no se haya procesado nada,
+    # para que el workflow de GitHub no falle al hacer 'git add'.
+    guardar_procesados(procesados)
+
     print("🏁 Revisión completada.")
 
 
