@@ -36,42 +36,39 @@ def guardar_procesados(procesados):
 
 def obtener_url_imagen(entrada):
     """
-    Intenta extraer la URL de la imagen de una entrada del feed RSS.
-    Si no la encuentra en el RSS, descarga el HTML del artículo y busca og:image.
+    Extrae la URL de la imagen principal de la noticia.
+    Primero intenta desde el RSS y, si falla, descarga el HTML canónico y busca og:image.
     """
-    # --- 1. Intentar desde el RSS (como antes) ---
+    # --- 1. Intentar desde el RSS ---
     if "enclosures" in entrada:
         for enlace in entrada.enclosures:
             if enlace.get("type", "").startswith("image/"):
                 return enlace.get("href")
-
     if "media_content" in entrada:
         for media in entrada.media_content:
             if media.get("url"):
                 return media.get("url")
-
     if "media_thumbnail" in entrada:
         for thumb in entrada.media_thumbnail:
             if thumb.get("url"):
                 return thumb.get("url")
 
-    contenido = entrada.get("summary", "")
-    if not contenido and entrada.get("content"):
-        contenido = entrada.content[0].get("value", "")
-    if contenido:
-        try:
-            soup = BeautifulSoup(contenido, "html.parser")
-            img_tag = soup.find("img")
-            if img_tag and img_tag.get("src"):
-                return img_tag["src"]
-        except Exception:
-            pass
+    # --- 2. Si el RSS no trae imagen, forzar la versión canónica del artículo ---
+    url_original = entrada.link
+    # Si la URL no contiene 'index.php', lo insertamos para evitar la versión AMP
+    if "/index.php/" not in url_original:
+        # Reemplaza el primer '/' después del dominio por '/index.php/'
+        partes = url_original.split("/", 3)
+        if len(partes) >= 4:
+            url_canonica = f"{partes[0]}//{partes[2]}/index.php/{partes[3]}"
+        else:
+            url_canonica = url_original
+    else:
+        url_canonica = url_original
 
-    # --- 2. Si el RSS no trajo imagen, buscar en el HTML del artículo ---
-    url_articulo = entrada.link
     try:
         respuesta = requests.get(
-            url_articulo,
+            url_canonica,
             timeout=20,
             headers={
                 "User-Agent": (
@@ -84,27 +81,20 @@ def obtener_url_imagen(entrada):
         respuesta.raise_for_status()
         sopa = BeautifulSoup(respuesta.text, "html.parser")
 
-        # Buscar la metaetiqueta og:image (la más fiable)
+        # Buscar la metaetiqueta og:image
         og_image = sopa.find("meta", property="og:image")
         if og_image and og_image.get("content"):
             return og_image["content"]
 
-        # Buscar twitter:image como respaldo
+        # Respaldo: twitter:image
         tw_image = sopa.find("meta", attrs={"name": "twitter:image"})
         if tw_image and tw_image.get("content"):
             return tw_image["content"]
 
-        # Si no hay metaetiquetas, buscar la primera imagen grande en el cuerpo
-        # (esto es menos fiable, pero puede funcionar)
-        for img in sopa.find_all("img"):
-            src = img.get("src")
-            if src and not src.startswith("data:") and "logo" not in src.lower():
-                return src
-
     except Exception as e:
         print(f"   ❌ Error al buscar imagen en el artículo: {e}")
 
-    return None  # Si no se encuentra nada
+    return None
 
 
 def extraer_contenido(url, reintentos=2, espera=5):
