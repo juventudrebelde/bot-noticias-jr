@@ -1,0 +1,40 @@
+name: Bot de Noticias JR
+
+on:
+  schedule:
+    # Se ejecuta cada 30 minutos. El cron de GitHub usa UTC.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente para probar
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permiso necesario para guardar el archivo de noticias procesadas
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # Usa la misma versión que tenías en tu Linux Mint
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar el bot de noticias
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python bot_noticias.py
+
+      - name: Guardar estado de noticias procesadas
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add noticias_procesadas.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Actualizar noticias procesadas"
+          git push
