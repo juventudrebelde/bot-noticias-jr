@@ -35,10 +35,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add noticias_procesadas.json
-          if git diff --staged --quiet; then
-            echo "No hay cambios en noticias_procesadas.json. Omitiendo commit."
+          if [ -f noticias_procesadas.json ]; then
+            git add noticias_procesadas.json
+            if git diff --staged --quiet; then
+              echo "No hay cambios en noticias_procesadas.json. Omitiendo commit."
+            else
+              git commit -m "Actualizar noticias procesadas"
+              git push
+            fi
           else
-            git commit -m "Actualizar noticias procesadas"
-            git push
+            echo "noticias_procesadas.json no existe todavía. Omitiendo commit."
           fi
