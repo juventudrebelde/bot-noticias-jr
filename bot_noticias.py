@@ -167,37 +167,66 @@ El texto completo del post (titular + resumen + CTA) NO debe exceder los 900 car
 def enviar_a_telegram(texto, url_imagen=None):
     """
     Envía un mensaje o una foto con texto (caption) al canal de Telegram.
-    Si se proporciona una URL de imagen, usa 'sendPhoto'; si no, usa 'sendMessage'.
+    Si se proporciona una URL de imagen, la descarga primero y luego la sube como archivo.
     """
+    url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    
     if url_imagen:
-        metodo_api = "sendPhoto"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "photo": url_imagen,
-            "caption": texto,
-        }
+        try:
+            # 1. Descargar la imagen desde la URL (con un user-agent de navegador)
+            print(f"   📥 Descargando imagen desde: {url_imagen}")
+            resp_img = requests.get(
+                url_imagen,
+                timeout=30,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+            )
+            resp_img.raise_for_status()
+
+            # 2. Preparar el envío como archivo adjunto
+            #    El nombre del archivo no es crucial, pero es bueno darle una extensión.
+            files = {'photo': ('imagen.jpg', resp_img.content)}
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "caption": texto
+            }
+            
+            # 3. Enviar a Telegram usando 'files' (multipart/form-data) en lugar de 'json'
+            respuesta = requests.post(url_api, data=payload, files=files, timeout=30)
+            respuesta.raise_for_status()
+            print(f"   ✅ Post publicado en Telegram (con imagen subida).")
+            return True
+
+        except requests.exceptions.RequestException as e:
+            print(f"   ❌ Error al descargar o subir la imagen: {e}")
+            # Si falla la imagen, intentamos publicar solo el texto como respaldo
+            print("   📝 Reintentando publicar solo el texto...")
+            url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload_texto = {"chat_id": TELEGRAM_CHAT_ID, "text": texto}
+            try:
+                resp_texto = requests.post(url_api, json=payload_texto, timeout=15)
+                resp_texto.raise_for_status()
+                print("   ✅ Post publicado en Telegram (solo texto, respaldo).")
+                return True
+            except Exception as e2:
+                print(f"   ❌ Error al publicar solo el texto: {e2}")
+                return False
+
     else:
-        metodo_api = "sendMessage"
+        # Si no hay URL de imagen, enviamos solo texto como antes
+        url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": texto,
-            "disable_web_page_preview": False,
+            "disable_web_page_preview": False
         }
-
-    url_api = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{metodo_api}"
-
-    try:
-        respuesta = requests.post(url_api, json=payload, timeout=20)
-        respuesta.raise_for_status()
-        print(f"   ✅ Post publicado en Telegram (método: {metodo_api}).")
-        return True
-    except Exception as e:
-        print(f"   ❌ Error al publicar en Telegram: {e}")
         try:
-            print(f"   Respuesta de la API: {respuesta.text}")
-        except Exception:
-            pass
-        return False
+            respuesta = requests.post(url_api, json=payload, timeout=15)
+            respuesta.raise_for_status()
+            print(f"   ✅ Post publicado en Telegram (solo texto).")
+            return True
+        except Exception as e:
+            print(f"   ❌ Error al publicar en Telegram: {e}")
+            return False
 
 
 def main():
