@@ -31,7 +31,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python bot_noticias.py
 
-            - name: Guardar estado de noticias procesadas
+      - name: Guardar estado de noticias procesadas
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
