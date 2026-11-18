@@ -210,6 +210,8 @@ def enviar_a_telegram(texto, url_imagen=None):
 
 
 def main():
+    def main():
+    print("🚀 EJECUTANDO SCRIPT VERSIÓN 2.0 - CON DESCARGA DE IMAGEN")
     print("🔍 Buscando noticias nuevas...")
     procesados = cargar_procesados()
     feed = feedparser.parse(RSS_URL)
